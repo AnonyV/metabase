@@ -252,6 +252,33 @@ function formatNumberCompact(value: number, options: FormattingOptions) {
   if (options.number_style === "percent") {
     return formatNumberCompactWithoutOptions(value * 100) + "%";
   }
+  if (options.number_style === "currency") {
+    try {
+      const { value: currency } = numberFormatterForOptions({
+        ...options,
+        currency_style: "symbol",
+      })
+        .formatToParts(value)
+        .find(p => p.type === "currency");
+
+      // this special case ensures the "~" comes before the currency
+      if (value !== 0 && value >= -0.01 && value <= 0.01) {
+        return `~${currency}0`;
+      }
+      return currency + formatNumberCompactWithoutOptions(value);
+    } catch (e) {
+      // Intl.NumberFormat failed, so we fall back to a non-currency number
+      return formatNumberCompactWithoutOptions(value);
+    }
+  }
+  if (options.number_style === "scientific") {
+    return formatNumberScientific(value, {
+      ...options,
+      // unsetting maximumFractionDigits prevents truncation of small numbers
+      maximumFractionDigits: undefined,
+      minimumFractionDigits: 1,
+    });
+  }
   return formatNumberCompactWithoutOptions(value);
 }
 
@@ -499,19 +526,51 @@ export function formatEmail(
   }
 }
 
-// based on https://github.com/angular/angular.js/blob/v1.6.3/src/ng/directive/input.js#L25
-const URL_WHITELIST_REGEX = /^(https?|mailto):\/*(?:[^:@]+(?::[^@]+)?@)?(?:[^\s:/?#]+|\[[a-f\d:]+])(?::\d+)?(?:\/[^?#]*)?(?:\?[^#]*)?(?:#.*)?$/i;
+function getUrlProtocol(url) {
+  try {
+    const { protocol } = new URL(url);
+    return protocol;
+  } catch (e) {
+    return undefined;
+  }
+}
+
+function isSafeProtocol(protocol) {
+  return (
+    protocol !== "javascript:" && protocol !== "data:" && protocol !== "file:"
+  );
+}
+
+function isDefaultLinkProtocol(protocol) {
+  return (
+    protocol === "http:" || protocol === "https:" || protocol === "mailto:"
+  );
+}
 
 export function formatUrl(
   value: Value,
-  { jsx, rich, view_as = "auto", link_text }: FormattingOptions = {},
+  {
+    jsx,
+    rich,
+    view_as = "auto",
+    link_text,
+    column: { special_type } = {},
+  }: FormattingOptions = {},
 ) {
   const url = String(value);
+  const urlSpecialType = isa(special_type, TYPE.URL);
+  const protocol = getUrlProtocol(url);
   if (
     jsx &&
     rich &&
     (view_as === "link" || view_as === "auto") &&
-    URL_WHITELIST_REGEX.test(url)
+    // undefined protocol means url didn't parse
+    protocol &&
+    // if the column type is URL, we show any safe url as a link
+    // otherwise, we just show the most common protocols
+    (urlSpecialType
+      ? isSafeProtocol(protocol)
+      : isDefaultLinkProtocol(protocol))
   ) {
     return (
       <ExternalLink className="link link--wrappable" href={url}>
@@ -528,7 +587,9 @@ export function formatImage(
   { jsx, rich, view_as = "auto", link_text }: FormattingOptions = {},
 ) {
   const url = String(value);
-  if (jsx && rich && view_as === "image" && URL_WHITELIST_REGEX.test(url)) {
+  const protocol = getUrlProtocol(url);
+  const acceptedProtocol = protocol === "http:" || protocol === "https:";
+  if (jsx && rich && view_as === "image" && acceptedProtocol) {
     return <img src={url} style={{ height: 30 }} />;
   } else {
     return url;
@@ -630,7 +691,11 @@ export function formatValueRaw(value: Value, options: FormattingOptions = {}) {
   ) {
     return formatDateTime(value, options);
   } else if (typeof value === "string") {
-    return formatStringFallback(value, options);
+    if (column && column.special_type != null) {
+      return value;
+    } else {
+      return formatStringFallback(value, options);
+    }
   } else if (typeof value === "number" && isCoordinate(column)) {
     const range = rangeForValue(value, options.column);
     if (range && !options.noRange) {

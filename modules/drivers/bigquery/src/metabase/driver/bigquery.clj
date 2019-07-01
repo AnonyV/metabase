@@ -10,7 +10,6 @@
              [core :as hsql]
              [helpers :as h]]
             [metabase
-             [config :as config]
              [driver :as driver]
              [util :as u]]
             [metabase.driver
@@ -238,7 +237,7 @@
      (let [^TableSchema schema (.getSchema response)
            parsers             (doall
                                 (for [^TableFieldSchema field (.getFields schema)
-                                      :let [parser-fn (type->parser (.getType field))]]
+                                      :let                    [parser-fn (type->parser (.getType field))]]
                                   (parser-fn *bigquery-timezone*)))
            columns             (for [column (table-schema->metabase-field-info schema)]
                                  (-> column
@@ -467,14 +466,7 @@
 
 (defmethod driver/supports? [:bigquery :expressions] [_ _] false)
 
-;; Don't enable foreign keys when testing because BigQuery *doesn't* have a notion of foreign keys. Joins are still
-;; allowed, which puts us in a weird position, however; people can manually specifiy "foreign key" relationships in
-;; admin and everything should work correctly. Since we can't infer any "FK" relationships during sync our normal FK
-;; tests are not appropriate for BigQuery, so they're disabled for the time being.
-;;
-;; TODO - either write BigQuery-speciifc tests for FK functionality or add additional code to manually set up these FK
-;; relationships for FK tables
-(defmethod driver/supports? [:bigquery :foreign-keys] [_ _] (not config/is-test?))
+(defmethod driver/supports? [:bigquery :foreign-keys] [_ _] true)
 
 ;; BigQuery doesn't return a timezone with it's time strings as it's always UTC, JodaTime parsing also defaults to UTC
 (defmethod driver.common/current-db-time-date-formatters :bigquery [_]
